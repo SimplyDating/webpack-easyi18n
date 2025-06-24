@@ -13,7 +13,7 @@
         "test": "echo \"Error: no test specified\" && exit 1",
         "example:clean": "rimraf example\\dist example\\locale\\webpack-easyi18n-temp",
         "example:build": "npm run example:clean && webpack -c example\\webpack.config.js",
-        "example:generatetransaltions": "dotnet tool restore && dotnet tool run generatepot --app-settings-paths=\"./example/appsettings.json\""
+        "example:generatetranslations": "dotnet tool restore && dotnet tool run generatepot --app-settings-paths=\"./example/appsettings.json\""
     },
     "dependencies": {
         "i18next-conv": "^4.0.3"
@@ -34,8 +34,8 @@
     "homepage": "https://github.com/SimplyDating/webpack-easyi18n#readme",
     "devDependencies": {
         "html-webpack-plugin": "^5.3.1",
-        "rimraf": "^3.0.2",
-        "webpack": "^5.32.0",
+        "rimraf": "^6.0.1",
+        "webpack": "^5.99.9",
         "webpack-cli": "^4.6.0"
     }
 }
