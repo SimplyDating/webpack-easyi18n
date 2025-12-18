@@ -15,6 +15,13 @@ class EasyI18nPlugin {
         includeUrls: null,
     };
 
+    static escapeNuggets = (string) => {
+        return string
+            .replace(/\\/g, `\\\\`) // escape backslashes
+            .replace(/'/g, `\\'`) // escape single quotes
+            .replace(/"/g, `\\"`); // escape double quotes
+    }
+
     constructor(locale, options = {}) {
         this.locale = locale;
         this.options = {
@@ -127,7 +134,7 @@ class EasyI18nPlugin {
                                 });
                             }
 
-                            return replacement;
+                            return EasyI18nPlugin.escapeNuggets(replacement);
                         });
 
                         compilation.updateAsset(filename, new SourceMapSource(
