@@ -36,7 +36,7 @@ class EasyI18nPlugin {
             compilation.hooks.processAssets.tapPromise(
                 {
                     name: 'EasyI18nPlugin',
-                    state: compilation.PROCESS_ASSETS_STAGE_DERIVED,
+                    stage: compilation.PROCESS_ASSETS_STAGE_DERIVED,
                 },
                 async () => {
                     const localeKey = this.locale[0];
