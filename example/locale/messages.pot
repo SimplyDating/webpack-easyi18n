@@ -1,7 +1,7 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2022-07-11 15:12+12:00\n"
+"POT-Creation-Date: 2025-12-19 00:04+13:00\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -24,7 +24,7 @@ msgid "Hey, 'buddy', how are you?"
 msgstr ""
 
 #: ./example/src\index.js:12
-msgid "Hey, \\"pal\\", how are you?"
+msgid "Hey, \\\"pal\\\", how are you?"
 msgstr ""
 
 #: ./example/src\index.js:2
