@@ -118,6 +118,9 @@ class EasyI18nPlugin {
                                 }
                             }
 
+                            // Escape the translated text BEFORE formatting/splicing
+                            replacement = EasyI18nPlugin.escapeNuggets(replacement);
+
                             // format nuggets
                             var formatItemsMatch = originalText.match(/\|\|\|(.+?)(?:\/\/\/.+?)?\]\]\]/s)
                             if (formatItemsMatch) {
@@ -134,7 +137,7 @@ class EasyI18nPlugin {
                                 });
                             }
 
-                            return EasyI18nPlugin.escapeNuggets(replacement);
+                            return replacement;
                         });
 
                         compilation.updateAsset(filename, new SourceMapSource(
