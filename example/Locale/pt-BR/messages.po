@@ -1,12 +1,20 @@
 msgid ""
 msgstr ""
 "Project-Id-Version: \n"
-"POT-Creation-Date: 2025-12-19 00:57+13:00\n"
-"PO-Revision-Date: 2025-12-19 00:57+13:00\n"
+"POT-Creation-Date: 2025-12-19 17:51+13:00\n"
+"PO-Revision-Date: 2025-12-19 17:51+13:00\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: pot (1.0.0+25f5fb60297fb562bb3d7946543c5709c57ef749)\n"
+
+#: ./example/src\index.js:20
+msgid "‘This is in single fancy quotes’"
+msgstr "'Isso está entre aspas simples e elegantes'"
+
+#: ./example/src\index.js:19
+msgid "“This is in fancy quotes”"
+msgstr "“Isso está entre aspas elegantes”"
 
 #: ./example/src\index.js:9
 msgid "a single line"
@@ -44,6 +52,10 @@ msgstr "múltiplo %0"
 msgid "on"
 msgstr "sobre"
 
+#: ./example/src\index.js:16
+msgid "Online favourites (%0)"
+msgstr "Favoritos online (%0)"
+
 #: ./example/src\index.js:3
 msgid "Page not found"
 msgstr "Página não encontrada"
@@ -63,4 +75,10 @@ msgid ""
 msgstr ""
 "Dois\n"
 "linhas"
+
+#~ msgid "This is in fancy quotes"
+#~ msgstr "Isso está entre aspas elegantes."
+
+#~ msgid "This is in single fancy quotes"
+#~ msgstr "Isso está entre aspas simples elegantes."
 

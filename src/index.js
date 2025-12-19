@@ -39,6 +39,73 @@ class EasyI18nPlugin {
             }
         };
 
+        /**
+         * Decode (a small subset of) JavaScript-style escape sequences from *bundle text* into
+         * their real runtime characters.
+         *
+         * Why this exists:
+         * - When targeting older environments, Babel/minifiers sometimes emit non-ASCII
+         *   characters using unicode escapes, e.g. "don\u2019t" instead of "don’t".
+         * - If we then call escapeNuggets(), it will escape backslashes, turning "\u2019" into
+         *   "\\u2019".
+         * - In the final JS bundle, "\\u2019" is *not* a unicode escape anymore; it becomes a
+         *   literal backslash-u sequence and the browser renders "don\u2019t".
+         *
+         * Example:
+         * - Bundle text contains:  "don\u2019t"
+         * - Without decode:         escapeNuggets => "don\\u2019t"  (renders as don\u2019t)
+         * - With decode first:      unescapeJsLike => "don’t"; then escapeNuggets keeps it as don’t
+         *
+         * Notes:
+         * - This intentionally decodes only "\uXXXX" and "\xXX" sequences.
+         * - It avoids decoding when the backslash itself is escaped (e.g. "\\u2019"), because
+         *   that usually means the author intended a literal "\u2019" to be displayed.
+         */
+        const unescapeJsLike = (value) => {
+            if (typeof value !== 'string') return value;
+
+            const isHex = (c) => (c >= '0' && c <= '9')
+                || (c >= 'a' && c <= 'f')
+                || (c >= 'A' && c <= 'F');
+
+            let out = '';
+            for (let i = 0; i < value.length; i++) {
+                const ch = value[i];
+                if (ch !== '\\') {
+                    out += ch;
+                    continue;
+                }
+
+                // If we have an escaped backslash ("\\u...." in text), do not decode.
+                if (i > 0 && value[i - 1] === '\\') {
+                    out += ch;
+                    continue;
+                }
+
+                const next = value[i + 1];
+                if (next === 'u') {
+                    const a = value[i + 2], b = value[i + 3], c = value[i + 4], d = value[i + 5];
+                    if (isHex(a) && isHex(b) && isHex(c) && isHex(d)) {
+                        out += String.fromCharCode(parseInt(`${a}${b}${c}${d}`, 16));
+                        i += 5;
+                        continue;
+                    }
+                } else if (next === 'x') {
+                    const a = value[i + 2], b = value[i + 3];
+                    if (isHex(a) && isHex(b)) {
+                        out += String.fromCharCode(parseInt(`${a}${b}`, 16));
+                        i += 3;
+                        continue;
+                    }
+                }
+
+                // Not a recognized escape; keep the backslash.
+                out += ch;
+            }
+
+            return out;
+        };
+
         compiler.hooks.thisCompilation.tap('EasyI18nPlugin', (compilation) => {
             compilation.hooks.processAssets.tapPromise(
                 {
@@ -100,7 +167,7 @@ class EasyI18nPlugin {
                                 }
                             } else {
                                 // .po files use \n notation for line breaks
-                                const translationKey = nuggetSyntaxRemoved.replace('\r\n', '\n');
+                                const translationKey = nuggetSyntaxRemoved.replace(/\r\n/g, '\n');
 
                                 // find this nugget in the locale's array of translations
                                 replacement = translationLookup[translationKey];
@@ -119,7 +186,7 @@ class EasyI18nPlugin {
                             }
 
                             // Escape the translated text BEFORE formatting/splicing
-                            replacement = EasyI18nPlugin.escapeNuggets(replacement);
+                            replacement = EasyI18nPlugin.escapeNuggets(unescapeJsLike(replacement));
 
                             // format nuggets
                             var formatItemsMatch = originalText.match(/\|\|\|(.+?)(?:\/\/\/.+?)?\]\]\]/s)
