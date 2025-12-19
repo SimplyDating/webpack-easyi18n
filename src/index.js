@@ -167,10 +167,14 @@ class EasyI18nPlugin {
                                 }
                             } else {
                                 // .po files use \n notation for line breaks
-                                const translationKey = nuggetSyntaxRemoved.replace(/\r\n/g, '\n');
+                                const translationKeyRaw = nuggetSyntaxRemoved.replace(/\r\n/g, '\n');
+                                const translationKey = unescapeJsLike(translationKeyRaw);
 
                                 // find this nugget in the locale's array of translations
                                 replacement = translationLookup[translationKey];
+                                if (typeof (replacement) === "undefined") {
+                                    replacement = translationLookup[translationKeyRaw];
+                                }
                                 if (typeof (replacement) === "undefined" || replacement === "") {
                                     if (this.options.warnOnMissingTranslations) {
                                         compilation.warnings.push(
