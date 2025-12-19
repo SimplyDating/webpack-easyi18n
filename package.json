@@ -1,6 +1,6 @@
 {
     "name": "webpack-easyi18n",
-    "version": "0.5.1",
+    "version": "0.5.2",
     "description": "Go from gettext catalog (.po files) to embeded localization in your Webpack bundles",
     "engines": {
         "node": ">=4.3.0 <5.0.0 || >=5.10"
