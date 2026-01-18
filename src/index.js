@@ -1,11 +1,25 @@
-const { SourceMapSource } = require("webpack").sources;
 const path = require("path");
 const {
     readFileSync,
     writeFileSync,
     mkdirSync
 } = require("fs");
-const gettextToI18Next = require("i18next-conv").gettextToI18next;
+
+async function loadGettextToI18next() {
+	// i18next-conv@16+ is ESM-only (and Node>=20). Requiring it from CommonJS breaks Jest with
+	// "Unexpected token 'export'". We support both:
+	// - CJS: require('i18next-conv').gettextToI18next
+	// - ESM: (await import('i18next-conv')).gettextToI18next
+	try {
+		// eslint-disable-next-line global-require
+		const mod = require('i18next-conv');
+		return mod.gettextToI18next || mod.gettextToI18Next || mod.default;
+	} catch (err) {
+		// If it's ESM-only, fall back to dynamic import.
+		const mod = await import('i18next-conv');
+		return mod.gettextToI18next || mod.gettextToI18Next || mod.default;
+	}
+}
 
 class EasyI18nPlugin {
     static defaultOptions = {
@@ -28,6 +42,8 @@ class EasyI18nPlugin {
             ...EasyI18nPlugin.defaultOptions,
             ...options
         };
+
+		this.translationLookup = null;
     }
 
     apply(compiler) {
@@ -39,189 +55,79 @@ class EasyI18nPlugin {
             }
         };
 
-        /**
-         * Decode (a small subset of) JavaScript-style escape sequences from *bundle text* into
-         * their real runtime characters.
-         *
-         * Why this exists:
-         * - When targeting older environments, Babel/minifiers sometimes emit non-ASCII
-         *   characters using unicode escapes, e.g. "don\u2019t" instead of "don’t".
-         * - If we then call escapeNuggets(), it will escape backslashes, turning "\u2019" into
-         *   "\\u2019".
-         * - In the final JS bundle, "\\u2019" is *not* a unicode escape anymore; it becomes a
-         *   literal backslash-u sequence and the browser renders "don\u2019t".
-         *
-         * Example:
-         * - Bundle text contains:  "don\u2019t"
-         * - Without decode:         escapeNuggets => "don\\u2019t"  (renders as don\u2019t)
-         * - With decode first:      unescapeJsLike => "don’t"; then escapeNuggets keeps it as don’t
-         *
-         * Notes:
-         * - This intentionally decodes only "\uXXXX" and "\xXX" sequences.
-         * - It avoids decoding when the backslash itself is escaped (e.g. "\\u2019"), because
-         *   that usually means the author intended a literal "\u2019" to be displayed.
-         */
-        const unescapeJsLike = (value) => {
-            if (typeof value !== 'string') return value;
+		const localeKey = this.locale[0];
+		const localePoPath = this.locale[1];
 
-            const isHex = (c) => (c >= '0' && c <= '9')
-                || (c >= 'a' && c <= 'f')
-                || (c >= 'A' && c <= 'F');
+		const prepareTranslations = async () => {
+			if (localePoPath === null) {
+				this.translationLookup = null;
+				return;
+			}
 
-            let out = '';
-            for (let i = 0; i < value.length; i++) {
-                const ch = value[i];
-                if (ch !== '\\') {
-                    out += ch;
-                    continue;
-                }
+			const poPath = path.join(this.options.localesPath, localePoPath);
+			mkdir(path.resolve(path.join(this.options.localesPath, "/webpack-easyi18n-temp/")));
 
-                // If we have an escaped backslash ("\\u...." in text), do not decode.
-                if (i > 0 && value[i - 1] === '\\') {
-                    out += ch;
-                    continue;
-                }
+			const gettextToI18next = await loadGettextToI18next();
+			if (typeof gettextToI18next !== 'function') {
+				throw new Error('Failed to load i18next-conv gettextToI18next()');
+			}
 
-                const next = value[i + 1];
-                if (next === 'u') {
-                    const a = value[i + 2], b = value[i + 3], c = value[i + 4], d = value[i + 5];
-                    if (isHex(a) && isHex(b) && isHex(c) && isHex(d)) {
-                        out += String.fromCharCode(parseInt(`${a}${b}${c}${d}`, 16));
-                        i += 5;
-                        continue;
-                    }
-                } else if (next === 'x') {
-                    const a = value[i + 2], b = value[i + 3];
-                    if (isHex(a) && isHex(b)) {
-                        out += String.fromCharCode(parseInt(`${a}${b}`, 16));
-                        i += 3;
-                        continue;
-                    }
-                }
+			// Keep the temp json file behavior for backward-compatibility/debugging.
+			const lookupData = await gettextToI18next(localeKey, readFileSync(poPath), {});
+			const translationLookupPath = path.join(this.options.localesPath, `/webpack-easyi18n-temp/${localeKey}.json`);
+			writeFileSync(translationLookupPath, lookupData);
 
-                // Not a recognized escape; keep the backslash.
-                out += ch;
-            }
+			try {
+				this.translationLookup = typeof lookupData === 'string' ? JSON.parse(lookupData) : lookupData;
+			} catch {
+				// Fallback to requiring the generated file.
+				// eslint-disable-next-line global-require, import/no-dynamic-require
+				this.translationLookup = require(translationLookupPath);
+			}
+		};
 
-            return out;
-        };
+		compiler.hooks.beforeCompile.tapPromise('EasyI18nPlugin', prepareTranslations);
+		compiler.hooks.watchRun.tapPromise('EasyI18nPlugin', prepareTranslations);
 
-        compiler.hooks.thisCompilation.tap('EasyI18nPlugin', (compilation) => {
-            compilation.hooks.processAssets.tapPromise(
-                {
-                    name: 'EasyI18nPlugin',
-                    stage: compilation.PROCESS_ASSETS_STAGE_DERIVED,
-                },
-                async () => {
-                    const localeKey = this.locale[0];
-                    const localePoPath = this.locale[1];
+		// Inject our loader so nuggets are transformed at source-level (before Babel turns JSX into string concatenations).
+		compiler.hooks.normalModuleFactory.tap('EasyI18nPlugin', (normalModuleFactory) => {
+			normalModuleFactory.hooks.afterResolve.tap('EasyI18nPlugin', (resolveData) => {
+				if (!resolveData) return;
 
-                    if (localePoPath !== null) {
-                        var poPath = path.join(this.options.localesPath, localePoPath);
+				// webpack 5 can expose resource on different fields depending on stage.
+				const resourcePath = resolveData.resource
+					|| (resolveData.resourceResolveData && resolveData.resourceResolveData.path)
+					|| (resolveData.createData && resolveData.createData.resource);
+				if (!resourcePath) return;
 
-                        mkdir(path.resolve(path.join(this.options.localesPath, "/webpack-easyi18n-temp/")));
+				// Skip dependencies
+				if (resourcePath.includes(`${path.sep}node_modules${path.sep}`)) return;
 
-                        console.log(`Reading translations from ${poPath}`)
-                        var lookupData = await gettextToI18Next(localeKey, readFileSync(poPath), {});
-                        var translationLookupPath = path.join(this.options.localesPath, `/webpack-easyi18n-temp/${localeKey}.json`);
-                        writeFileSync(translationLookupPath, lookupData);
-                        console.log(`${localeKey} translation lookup file created ${translationLookupPath}`);
-                    }
+				// Only transform JS/TS sources.
+				if (!/\.[cm]?[jt]sx?$/.test(resourcePath)) return;
 
-                    let translationLookup = null;
-                    if (localePoPath !== null) {
-                        translationLookup = require(path.join(this.options.localesPath, `/webpack-easyi18n-temp/${localeKey}.json`));
-                    }
+				// Apply include/exclude patterns against the full resource path.
+				if (this.options.excludeUrls != null && this.options.excludeUrls.some(excludedUrl => resourcePath.includes(excludedUrl))) return;
+				if (this.options.includeUrls != null && !this.options.includeUrls.some(includedUrl => resourcePath.includes(includedUrl))) return;
 
-                    compilation.getAssets().forEach((asset) => {
-                        const filename = asset.name;
-                        const originalSourceObj = compilation.assets[filename];
-                        const originalSource = originalSourceObj.source();
+				// In webpack 5, mutate createData.loaders to affect the final NormalModule.
+				if (!resolveData.createData) resolveData.createData = {};
+				if (!Array.isArray(resolveData.createData.loaders)) {
+					resolveData.createData.loaders = Array.isArray(resolveData.loaders) ? resolveData.loaders : [];
+				}
 
-                        // skip any files that have been excluded
-                        const modifyFile = typeof originalSource === 'string'
-                            && (this.options.excludeUrls == null || !this.options.excludeUrls.some(excludedUrl => filename.includes(excludedUrl)))
-                            && (this.options.includeUrls == null || this.options.includeUrls.some(includedUrl => filename.includes(includedUrl)));
-                        if (!modifyFile) return;
-
-                        // Unfortunately the regex below doesn't work as js flavoured regex makes only the last capture included
-                        // in a capture group available (unlike .NET which lets you iterate over all captures in a group).
-                        // This means formatable nuggets with multiple formatable items will fail.
-                        //
-                        // Take the following nugget for example:
-                        // - [[[%0 %1|||1|||2]]]
-                        //
-                        // The regex below will only include "2" in the second capture group, rather than all captures "1|||2".
-                        // We need to do multiple rounds of parsing in order to work around this
-                        //const regex = /\[\[\[(.+?)(?:\|\|\|(.+?))*(?:\/\/\/(.+?))?\]\]\]/sg;
-                        const regex = /\[\[\[(.+?)(?:\|\|\|.+?)*(?:\/\/\/(.+?))?\]\]\]/sg;
-
-                        let source = originalSource.replace(regex, (originalText, nuggetSyntaxRemoved) => {
-                            let replacement = null;
-
-                            if (localePoPath === null) {
-                                if (this.options.alwaysRemoveBrackets) {
-                                    replacement = nuggetSyntaxRemoved;
-                                } else {
-                                    return originalText; // leave this nugget alone
-                                }
-                            } else {
-                                // .po files use \n notation for line breaks
-                                const translationKeyRaw = nuggetSyntaxRemoved.replace(/\r\n/g, '\n');
-                                const translationKey = unescapeJsLike(translationKeyRaw);
-
-                                // find this nugget in the locale's array of translations
-                                replacement = translationLookup[translationKey];
-                                if (typeof (replacement) === "undefined") {
-                                    replacement = translationLookup[translationKeyRaw];
-                                }
-                                if (typeof (replacement) === "undefined" || replacement === "") {
-                                    if (this.options.warnOnMissingTranslations) {
-                                        compilation.warnings.push(
-                                            new Error(`Missing translation in ${filename}.\n '${nuggetSyntaxRemoved}' : ${localeKey}`));
-                                    }
-
-                                    if (this.options.alwaysRemoveBrackets) {
-                                        replacement = nuggetSyntaxRemoved;
-                                    } else {
-                                        return originalText; // leave this nugget alone
-                                    }
-                                }
-                            }
-
-                            // Escape the translated text BEFORE formatting/splicing
-                            replacement = EasyI18nPlugin.escapeNuggets(unescapeJsLike(replacement));
-
-                            // format nuggets
-                            var formatItemsMatch = originalText.match(/\|\|\|(.+?)(?:\/\/\/.+?)?\]\]\]/s)
-                            if (formatItemsMatch) {
-                                const formatItems = formatItemsMatch[1]
-                                    .split('|||');
-
-                                replacement = replacement.replace(/(%\d+)/g, (value) => {
-                                    var identifier = parseInt(value.slice(1));
-                                    if (!isNaN(identifier) && formatItems.length > identifier) {
-                                        return formatItems[identifier];
-                                    } else {
-                                        return value;
-                                    }
-                                });
-                            }
-
-                            return replacement;
-                        });
-
-                        compilation.updateAsset(filename, new SourceMapSource(
-                            source,
-                            filename,
-                            originalSourceObj.map(),
-                            originalSource,
-                            null,
-                            true));
-                    });
-                }
-            );
-        });
+				resolveData.createData.loaders.push({
+					loader: path.resolve(__dirname, 'loader.js'),
+					options: {
+						localeKey,
+						localePoPath,
+						alwaysRemoveBrackets: this.options.alwaysRemoveBrackets,
+						warnOnMissingTranslations: this.options.warnOnMissingTranslations,
+						translationLookup: this.translationLookup,
+					},
+				});
+			});
+		});
     }
 }
 

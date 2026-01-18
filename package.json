@@ -10,13 +10,10 @@
     ],
     "main": "src/index.js",
     "scripts": {
-        "test": "echo \"Error: no test specified\" && exit 1",
-        "example:clean": "rimraf example\\dist example\\locale\\webpack-easyi18n-temp",
-        "example:build": "npm run example:clean && webpack -c example\\webpack.config.js",
-        "example:generatetranslations": "dotnet tool restore && dotnet tool run generatepot --app-settings-paths=\"./example/appsettings.json\""
+		"test": "node --experimental-vm-modules ./node_modules/jest/bin/jest.js"
     },
     "dependencies": {
-        "i18next-conv": "^4.0.3"
+        "i18next-conv": "^16.0.0"
     },
     "repository": {
         "type": "git",
@@ -33,7 +30,16 @@
     },
     "homepage": "https://github.com/SimplyDating/webpack-easyi18n#readme",
     "devDependencies": {
+        "@babel/core": "^7.26.3",
+        "@babel/generator": "^7.26.3",
+        "@babel/parser": "^7.26.3",
+        "@babel/preset-env": "^7.26.3",
+        "@babel/preset-react": "^7.26.3",
+        "@babel/traverse": "^7.26.3",
+        "@babel/types": "^7.26.3",
         "html-webpack-plugin": "^5.3.1",
+        "jest": "^29.7.0",
+        "react": "^18.3.1",
         "rimraf": "^6.0.1",
         "webpack": "^5.99.9",
         "webpack-cli": "^4.6.0"

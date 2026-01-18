@@ -48,6 +48,20 @@ module.exports = Object.keys(Locales).map(function(locale) {
         ])
     };
 });
+
+### React / JSX support
+
+This plugin transforms nuggets at **source level** (via an injected webpack loader), so nuggets can span JSX text, `{expressions}`, and even nested JSX elements.
+
+Example:
+
+```jsx
+<p>
+  [[[Just {changeStatusBtn} to change your status.]]]
+</p>
+```
+
+Internally this becomes a translated JSX children sequence rather than a single string, so placeholders like `%0` can be reordered per-locale without breaking React.
 ```
 
 ### Options

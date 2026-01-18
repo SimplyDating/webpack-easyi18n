@@ -1,0 +1,6 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+
+msgid "Just %0 to change your status and immediately send a chat request."
+msgstr "To change your status and immediately send a chat request, %0."
