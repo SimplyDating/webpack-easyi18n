@@ -314,6 +314,47 @@ function transformJsxNuggets(children, state, fileNameForWarnings) {
 	const out = [];
 	let i = 0;
 
+	// React/JSX nugget support notes:
+	// - In JSX, text is NOT a single string at runtime/source level. It's a list of children:
+	//   JSXText nodes, JSXExpressionContainer nodes (e.g. {foo}, {" "}), and JSXElement nodes.
+	// - Nuggets can span multiple children, e.g.:
+	//     [[[Hello {name} <b>world</b>]]]
+	// - For "raw-key" matching we must reproduce the exact key that shows up in translationLookup
+	//   (e.g. the keys produced by webpack-easyi18n-temp). That includes the original source text
+	//   for embedded nodes like {changeStatusBtn} / {" "} and <button ...>...</button>, including
+	//   formatting and newlines.
+	// - For emitting output we support two styles of translation values:
+	//   (1) Placeholder-based: translated string contains %0, %1 ...; we reinsert captured nodes.
+	//   (2) Raw JSX-based: translated string contains literal JSX/expressions; we parse it as JSX
+	//       and inject those AST children directly.
+
+	// Returns the original source text for a node (used to build raw-key strings).
+	const getSourceSliceForNode = (node) => {
+		if (!node || state.source == null) return null;
+		if (typeof node.start !== 'number' || typeof node.end !== 'number') return null;
+		return state.source.slice(node.start, node.end);
+	};
+
+	const parseTranslatedJsxChildren = (translated) => {
+		// Used for raw JSX translation values.
+		// Example translation value:
+		//   "Просто{\" \"}<button onClick={onClick}>нажмите</button>"
+		// We parse it as JSX and splice the resulting children into the output.
+		// Parse translation as JSX so translations can include markup like <button ...>...</button>
+		// and expression containers like {" "}.
+		try {
+			// Wrap in a fragment so we can accept multiple top-level children.
+			const expr = parser.parseExpression(`<>${translated}</>`, {
+				plugins: ['jsx', 'typescript', 'classProperties'],
+			});
+			if (t.isJSXFragment(expr)) return expr.children;
+			if (t.isJSXElement(expr)) return [expr];
+		} catch {
+			// Caller decides how to fall back.
+		}
+		return null;
+	};
+
 	const emitMissing = (key) => {
 		if (!state.warnOnMissingTranslations) return;
 		if (typeof state.emitWarning === 'function') {
@@ -337,8 +378,13 @@ function transformJsxNuggets(children, state, fileNameForWarnings) {
 
 		if (before) out.push(t.jsxText(before));
 
-		// Begin capturing nugget content across subsequent children.
-		let message = '';
+		// Begin capturing one nugget.
+		// - rawKeyText: exact (source-derived) key contents inside [[[...]]]
+		// - templateText: placeholder skeleton used to re-emit original content when we need to
+		//   remove brackets but have no translation. Each embedded node becomes %N and we capture the
+		//   corresponding node/expression in `values[N]`.
+		let rawKeyText = '';
+		let templateText = '';
 		const values = [];
 		let done = false;
 
@@ -350,49 +396,59 @@ function transformJsxNuggets(children, state, fileNameForWarnings) {
 			if (!text) return;
 			const endIdx = text.indexOf(NUGGET_END);
 			if (endIdx === -1) {
-				message += normalizeJsxTextForKey(text);
+				templateText += text;
+				rawKeyText += text;
 				return { done: false };
 			}
-			message += normalizeJsxTextForKey(text.slice(0, endIdx));
+			templateText += text.slice(0, endIdx);
+			rawKeyText += text.slice(0, endIdx);
 			const remainder = text.slice(endIdx + NUGGET_END.length);
 			return { done: true, remainder };
 		};
 
-		// Consume seed (which may contain ]]]).
+		// Fast path: the closing marker (]]]) is in the same JSXText that opened the nugget.
 		{
 			const res = consumeText(seed);
 			if (res.done) {
 				// Entire nugget is within the first JSXText.
-				const keyRaw = message;
-				const key = keyRaw;
+				const rawKey = normalizeKey(rawKeyText);
 				const translated = getTranslation({
 					localePoPath: state.localePoPath,
 					alwaysRemoveBrackets: state.alwaysRemoveBrackets,
 					translationLookup: state.translationLookup,
-					key,
-					rawKey: keyRaw,
+					key: rawKey,
+					rawKey,
 				});
 
 				if (translated == null) {
-					if (state.localePoPath != null && state.warnOnMissingTranslations) emitMissing(keyRaw);
+					if (state.localePoPath != null && state.warnOnMissingTranslations) emitMissing(rawKey);
 					if (state.localePoPath == null && !state.alwaysRemoveBrackets) {
 						// Leave original unmodified
 						out.push(child);
 						i++;
 						continue;
 					}
-					out.push(t.jsxText(keyRaw + res.remainder));
+					out.push(...buildJsxChildrenFromTranslation(templateText, values));
+					if (res.remainder) out.push(t.jsxText(res.remainder));
 					i++;
 					continue;
 				}
 
-				out.push(...buildJsxChildrenFromTranslation(translated, values));
+				if (/%\d+/.test(translated)) {
+					out.push(...buildJsxChildrenFromTranslation(translated, values));
+				} else {
+					const parsedChildren = parseTranslatedJsxChildren(translated);
+					if (parsedChildren != null) out.push(...parsedChildren);
+					else out.push(t.jsxText(translated));
+				}
 				if (res.remainder) out.push(t.jsxText(res.remainder));
 				i++;
 				continue;
 			}
 		}
 
+		// Slow path: the nugget spans multiple JSX children; keep consuming until we find ]]]
+		// in a later JSXText node.
 		localIndex = i + 1;
 
 		while (localIndex < children.length) {
@@ -403,18 +459,17 @@ function transformJsxNuggets(children, state, fileNameForWarnings) {
 				if (res.done) {
 					done = true;
 					// Finish: translate and emit remainder
-					const keyRaw = message;
-					const key = keyRaw;
+					const rawKey = normalizeKey(rawKeyText);
 					const translated = getTranslation({
 						localePoPath: state.localePoPath,
 						alwaysRemoveBrackets: state.alwaysRemoveBrackets,
 						translationLookup: state.translationLookup,
-						key,
-						rawKey: keyRaw,
+						key: rawKey,
+						rawKey,
 					});
 
 					if (translated == null) {
-						if (state.localePoPath != null && state.warnOnMissingTranslations) emitMissing(keyRaw);
+						if (state.localePoPath != null && state.warnOnMissingTranslations) emitMissing(rawKey);
 						if (state.localePoPath == null && !state.alwaysRemoveBrackets) {
 							// Leave original sequence unmodified
 							out.push(child);
@@ -423,9 +478,15 @@ function transformJsxNuggets(children, state, fileNameForWarnings) {
 							continue;
 						}
 
-						out.push(...buildJsxChildrenFromTranslation(keyRaw, values));
+						out.push(...buildJsxChildrenFromTranslation(templateText, values));
 					} else {
-						out.push(...buildJsxChildrenFromTranslation(translated, values));
+						if (/%\d+/.test(translated)) {
+							out.push(...buildJsxChildrenFromTranslation(translated, values));
+						} else {
+							const parsedChildren = parseTranslatedJsxChildren(translated);
+							if (parsedChildren != null) out.push(...parsedChildren);
+							else out.push(t.jsxText(translated));
+						}
 					}
 
 					if (res.remainder) out.push(t.jsxText(res.remainder));
@@ -443,25 +504,42 @@ function transformJsxNuggets(children, state, fileNameForWarnings) {
 					localIndex++;
 					continue;
 				}
+				// The raw key wants the exact source representation (e.g. {" "}, {foo}).
+				// The template wants a placeholder to preserve the original child ordering.
+				{
+					const slice = getSourceSliceForNode(current);
+					if (slice != null) rawKeyText += slice;
+				}
 				const index = values.length;
 				values.push(current.expression);
-				message += `%${index}`;
+				templateText += `%${index}`;
 				localIndex++;
 				continue;
 			}
 
 			if (t.isJSXElement(current) || t.isJSXFragment(current)) {
+				// Same strategy for nested elements/fragments (e.g. <button>...</button>):
+				// - rawKeyText captures the exact source slice
+				// - templateText captures a %N placeholder
+				{
+					const slice = getSourceSliceForNode(current);
+					if (slice != null) rawKeyText += slice;
+				}
 				const index = values.length;
 				values.push(current);
-				message += `%${index}`;
+				templateText += `%${index}`;
 				localIndex++;
 				continue;
 			}
 
 			// Other child types: keep them as placeholders to avoid losing content.
+			{
+				const slice = getSourceSliceForNode(current);
+				if (slice != null) rawKeyText += slice;
+			}
 			const index = values.length;
 			values.push(current);
-			message += `%${index}`;
+			templateText += `%${index}`;
 			localIndex++;
 		}
 
@@ -504,6 +582,7 @@ function buildJsxChildrenFromTranslation(translated, values) {
 
 function transformSource(source, options = {}) {
 	const state = {
+		source,
 		localeKey: options.localeKey || '',
 		localePoPath: options.localePoPath ?? null,
 		alwaysRemoveBrackets: Boolean(options.alwaysRemoveBrackets),
@@ -529,9 +608,12 @@ function transformSource(source, options = {}) {
 
 	traverse(ast, {
 		JSXElement(path) {
+			// React support: rewrite nuggets at the JSX AST level so we can preserve embedded
+			// expressions/elements as real AST nodes (not string concatenations).
 			path.node.children = transformJsxNuggets(path.node.children, state, options.fileNameForWarnings);
 		},
 		JSXFragment(path) {
+			// Same as JSXElement, but for fragments: <>...</>
 			path.node.children = transformJsxNuggets(path.node.children, state, options.fileNameForWarnings);
 		},
 		StringLiteral(path) {
